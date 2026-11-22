@@ -1,0 +1,11 @@
+# Park maps and anything stamped onto them (publisher artwork; not ours to redistribute)
+*.pdf
+*.png
+!docs/img/*.png
+
+# Generated route outputs
+routes/*.gpx
+
+# Python
+__pycache__/
+*.pyc

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trail Route Builder</title>
+  <meta name="description" content="Plan a hike on official trails, see distance and climb, and stamp the route onto a park's GeoPDF map.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232f5d3a'/%3E%3Cpath d='M6 24 13 11l5 8 3-4 5 9z' fill='%23fff'/%3E%3Cpath d='M7 25c6-2 9-8 18-9' stroke='%23d81b7a' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="map" aria-label="Trail map"></div>
+
+  <aside id="panel">
+    <header>
+      <h1>Trail Route Builder</h1>
+      <p class="lede">Plan a hike on official trails, then put it on the park map.</p>
+    </header>
+
+    <section class="area">
+      <label for="area" class="sr">Area</label>
+      <select id="area"></select>
+      <button id="load-view" class="ghost" type="button">Load trails in this view</button>
+    </section>
+
+    <section id="empty" class="hint">
+      <ol>
+        <li>Click a <span class="pk-inline">P</span> or any trail to start.</li>
+        <li>Click farther along. The route follows trails between your points.</li>
+        <li>Drag a point to move it. Click a point to remove it.</li>
+      </ol>
+    </section>
+
+    <section id="summary" hidden>
+      <label for="name" class="sr">Route name</label>
+      <input id="name" placeholder="Name this route" maxlength="60" autocomplete="off">
+      <div class="stats">
+        <div><b id="s-dist">0.0</b><span>miles</span></div>
+        <div><b id="s-up">–</b><span>ft climb</span></div>
+        <div><b id="s-time">–</b><span>hours</span></div>
+      </div>
+      <div class="tools">
+        <button id="undo" type="button">Undo</button>
+        <button id="loop" type="button">Close loop</button>
+        <button id="reverse" type="button">Reverse</button>
+        <button id="clear" type="button">Clear</button>
+      </div>
+      <figure id="profile"></figure>
+      <ol id="legs"></ol>
+    </section>
+
+    <section id="export" hidden>
+      <h2>Take it with you</h2>
+      <label class="file primary" id="pdf-label">
+        <input type="file" id="pdf" accept=".pdf,application/pdf">
+        <span>Stamp onto a map PDF…</span>
+      </label>
+      <label class="check"><input type="checkbox" id="card" checked> Add a summary card</label>
+      <p class="fine">Pick the park's GeoPDF map. Midpen preserve maps from
+        <a href="https://www.openspace.org/maps" target="_blank" rel="noopener">openspace.org/maps</a> work.
+        The route goes on its own layer, and your file never leaves your browser.</p>
+      <div class="row">
+        <button id="gpx" type="button">Download GPX</button>
+        <button id="share" type="button">Copy link</button>
+      </div>
+    </section>
+
+    <footer>
+      Only named, official trails are routable. Distance, climb and time are estimates.
+      Time assumes 2.5 mph plus 1 hour per 2,000 ft of climb.
+      <a href="https://github.com/caseymillsdavis/trailroute" target="_blank" rel="noopener">Source</a>
+    </footer>
+  </aside>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

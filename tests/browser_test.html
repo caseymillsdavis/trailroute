@@ -1,0 +1,64 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>trailroute browser test</title>
+<!--
+  Headless check of the web app's routing, elevation and PDF stamping.
+  Serve the repo root, put a GeoPDF at tests/fixtures/map_ECDM.pdf, then:
+    google-chrome --headless=new --virtual-time-budget=60000 --dump-dom \
+      http://localhost:8765/tests/browser_test.html > /tmp/out.html
+  Results land in #out (JSON) and the stamped PDF, base64, in #pdf.
+-->
+<pre id="out">running</pre>
+<pre id="pdf"></pre>
+<script type="module">
+import { TrailGraph, buildRoute } from "../docs/js/trails.js";
+import { elevations, climb } from "../docs/js/elevation.js";
+import { stampPdf } from "../docs/js/geopdf.js";
+
+const out = {};
+try {
+  const g = new TrailGraph();
+  g.loadCompact(await (await fetch("../docs/data/ecdm.json")).json());
+  out.nodes = g.ll.size;
+
+  // waypoints: every 40th point of the CLI's GPX for the same loop
+  const gpx = await (await fetch("fixtures/deep_south_loop.gpx")).text();
+  const pts = [...gpx.matchAll(/lat="([-\d.]+)" lon="([-\d.]+)"/g)].map((m) => [+m[1], +m[2]]);
+  const wps = pts.filter((_, i) => i % 40 === 0).concat([pts[pts.length - 1]])
+    .map((p, i, a) => g.nearest(p, i === 0 || i === a.length - 1 ? 400 : 60)) // ends: parking lot
+    .filter((id, i, a) => id != null && id !== a[i - 1]);
+  const segs = wps.slice(1).map((id, i) => g.shortest(wps[i], id));
+  out.nullSegments = segs.filter((s) => !s).length;
+  const r = buildRoute(g, segs);
+  out.miles = +(r.length / 1609.344).toFixed(2);
+  out.legs = r.legs.map((l) => `${l.name} ${(l.m / 1609.344).toFixed(2)}`);
+
+  const n = Math.round(r.length / 30), ds = Array.from({ length: n + 1 }, (_, i) => r.length * i / n);
+  const { pointAt } = await import("../docs/js/trails.js");
+  const el = await elevations(ds.map((d) => pointAt(r, d)));
+  const [up, down] = climb(el);
+  out.gainFt = Math.round(up / 0.3048); out.lossFt = Math.round(down / 0.3048);
+  out.minFt = Math.round(Math.min(...el) / 0.3048); out.maxFt = Math.round(Math.max(...el) / 0.3048);
+  for (const leg of r.legs) {
+    const seg = el.filter((_, i) => ds[i] >= leg.start - 1 && ds[i] <= leg.start + leg.m + 1);
+    const [u, dn] = climb(seg); leg.upFt = u / 0.3048; leg.downFt = dn / 0.3048;
+  }
+
+  const bytes = new Uint8Array(await (await fetch("fixtures/" + (new URLSearchParams(location.search).get("map") || "map_ECDM.pdf"))).arrayBuffer());
+  const route = { name: "Deep south loop (web)", pts: r.pts, cum: r.cum, length: r.length, legs: r.legs,
+    startName: "Skeggs Point", endName: "Skeggs Point",
+    elevD: ds, elevFt: el.map((v) => v / 0.3048), gainFt: up / 0.3048, lossFt: down / 0.3048 };
+  const pdf = await stampPdf(bytes, route);
+  out.pdfBytes = pdf.length;
+  let s = ""; for (let i = 0; i < pdf.length; i += 0x8000) s += String.fromCharCode.apply(null, pdf.subarray(i, i + 0x8000));
+  document.getElementById("pdf").textContent = btoa(s);
+
+  // wrong-map guard
+  try { await stampPdf(bytes, { ...route, pts: route.pts.map(([a, b]) => [a + 1, b]) }); out.guard = "MISSING"; }
+  catch (e) { out.guard = e.message; }
+  out.ok = true;
+} catch (e) {
+  out.error = String(e && e.stack || e);
+}
+document.getElementById("out").textContent = JSON.stringify(out, null, 1);
+</script>
