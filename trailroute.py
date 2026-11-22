@@ -219,6 +219,33 @@ class Georef:
 # --------------------------------------------------------------------------- trails (OSM)
 
 FOOT_HIGHWAYS = {"path", "track", "footway", "bridleway", "steps", "pedestrian", "cycleway"}
+CONNECTOR_MAX_M = 150  # unnamed links up to this long can join two named trails
+
+
+def routable_ways(elements):
+    """Yield (way, name) for each named official trail, then (way, "") for each
+    short unnamed connector whose two ends are on different named trails.
+
+    Trailheads are often mapped that way: at Skeggs Point, Fir Trail reaches
+    Tafoni / El Corte de Madera Creek only through an unnamed bit of track by the gate.
+    Longer unnamed paths, dead-end spurs and shortcuts back onto the same trail stay out.
+    """
+    ways = [w for w in elements if w["type"] == "way" and w.get("geometry")
+            and Trails.usable(w.get("tags", {}))]
+    on = {}
+    for w in ways:
+        name = w["tags"].get("name")
+        if name:
+            yield w, name
+            for n in w["nodes"]:
+                on.setdefault(n, set()).update(norm(x) for x in name.split(";"))
+    for w in ways:
+        if w["tags"].get("name"):
+            continue
+        a, b = on.get(w["nodes"][0]), on.get(w["nodes"][-1])
+        g = [(p["lat"], p["lon"]) for p in w["geometry"]]
+        if a and b and not (a & b) and sum(hav(p, q) for p, q in zip(g, g[1:])) <= CONNECTOR_MAX_M:
+            yield w, ""
 
 
 def fetch_osm(bounds, path):
@@ -271,12 +298,13 @@ class Trails:
                 self.lots.append((t.get("name") or "lot %d" % w["id"], c))
                 if t.get("name"):
                     self.places[t["name"]] = c
-            if not self.usable(t) or not t.get("name"):
-                continue
-            names = frozenset(norm(n) for n in t["name"].split(";"))
-            for n in t["name"].split(";"):
-                self.display.setdefault(norm(n), n.strip())
-            ids = w["nodes"]
+        for w, name in routable_ways(els):
+            # connectors get no names: the router lets any leg pass through them
+            names = frozenset(norm(n) for n in name.split(";") if n.strip())
+            for n in name.split(";"):
+                if n.strip():
+                    self.display.setdefault(norm(n), n.strip())
+            ids, geom = w["nodes"], w["geometry"]
             for nid, p in zip(ids, geom):
                 self.ll[nid] = (p["lat"], p["lon"])
             for a, b in zip(ids, ids[1:]):
@@ -324,8 +352,8 @@ class Trails:
             if (u, k) == (t, K - 1):
                 break
             for v, names, L in self.adj.get(u, ()):
-                for nk in (k, k + 1):
-                    if nk < K and keys[nk] in names and d + L < dist.get((v, nk), math.inf):
+                for nk in ((k,) if not names else (k, k + 1)):  # unnamed connector: stay on this leg
+                    if nk < K and (not names or keys[nk] in names) and d + L < dist.get((v, nk), math.inf):
                         dist[(v, nk)] = d + L
                         prev[(v, nk)] = (u, k)
                         heapq.heappush(pq, (d + L, v, nk))

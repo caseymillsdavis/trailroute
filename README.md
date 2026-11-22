@@ -21,7 +21,10 @@ onto a park's GeoPDF map, either in the browser or from the command line.
   **Load trails in this view** to pull trails from OpenStreetMap.
 
 Only named, official trails are routable. Paths that OpenStreetMap tags as informal, or as
-private or closed, are left out, because many preserves prohibit off-trail use.
+private or closed, are left out, because many preserves prohibit off-trail use. The one
+exception is short unnamed links (up to 150 m) whose two ends are on different named trails.
+Trailheads are often mapped that way. At Skeggs Point, for example, Fir Trail reaches Tafoni
+and El Corte de Madera Creek trails only through a few meters of unnamed track at the gate.
 
 ## Command-line tool
 
@@ -70,8 +73,12 @@ Example routes are in [`routes/`](routes).
 python3 -m http.server 8765        # then open http://localhost:8765/docs/
 ```
 
-`tests/browser_test.html` checks routing, elevation and PDF stamping in headless Chrome. It
-needs a GeoPDF at `tests/fixtures/map_ECDM.pdf`; see the comment at the top of the file.
+Two headless-Chrome tests; the comment at the top of each file shows how to run it:
+
+- `tests/browser_test.html` checks routing, elevation and PDF stamping. It needs a GeoPDF at
+  `tests/fixtures/map_ECDM.pdf`.
+- `tests/app_test.html` drives the real app in an iframe. It covers routing out of the Skeggs
+  trailhead, trail hover once a route is drawn, and reopening a share link.
 
 `tools/export_web_data.py` turns an Overpass download into the compact trail file the web app
 ships with (`docs/data/`).

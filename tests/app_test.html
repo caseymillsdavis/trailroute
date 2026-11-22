@@ -1,0 +1,106 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>trailroute app test</title>
+<!--
+  Drives the real web app (in an iframe) the way a person would. Serve the repo root, then:
+    google-chrome --headless=new --window-size=1300,900 --virtual-time-budget=30000 --dump-dom \
+      http://localhost:8765/tests/app_test.html > /tmp/out.html
+  Results land in #out (JSON); "fail" lists anything that went wrong.
+-->
+<style>body { margin: 0 } iframe { width: 1200px; height: 800px; border: 0 }</style>
+<pre id="out">running</pre>
+<iframe id="app"></iframe>
+<script type="module">
+const out = { fail: [] };
+const check = (ok, what) => { if (!ok) out.fail.push(what); };
+const MI = 1609.344, sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const frame = document.getElementById("app");
+
+async function openApp(hash = "") {
+  frame.src = "../docs/index.html?t=" + Math.random() + hash;
+  for (let i = 0; i < 200; i++) {
+    await sleep(50);
+    const tr = frame.contentWindow && frame.contentWindow.trailroute;
+    if (tr && tr.ready) { await settle(tr.map); return tr; }
+  }
+  throw new Error("app didn't start");
+}
+// Leaflet ignores the mouse while a zoom animation runs (the app opens with one)
+async function settle(map) {
+  await sleep(100);
+  for (let i = 0; i < 100 && map._animatingZoom; i++) await sleep(50);
+  await sleep(100);
+}
+async function view(map, ll, z) { map.setView(ll, z, { animate: false }); await settle(map); }
+const legsOf = (tr) => tr.state.route.legs.map((l) => `${l.name} ${(l.m / MI).toFixed(2)}`);
+
+// Move the mouse over a spot the way a real pointer does: hit-test it (which honours
+// pointer-events), then send mousemove to whatever is on top there.
+async function hover(tr, latlng) {
+  const doc = frame.contentDocument, win = frame.contentWindow;
+  const box = tr.map.getContainer().getBoundingClientRect();
+  const p = tr.map.latLngToContainerPoint(latlng);
+  const x = box.left + p.x, y = box.top + p.y;
+  const el = doc.elementFromPoint(x, y);
+  el.dispatchEvent(new win.MouseEvent("mousemove", { clientX: x, clientY: y, bubbles: true }));
+  await sleep(120);
+  const tip = doc.querySelector(".leaflet-tooltip.trail-tip");
+  const r = { pane: el.closest(".leaflet-pane")?.className.replace(/leaflet-(pane|zoom-animated)/g, "").trim() || el.tagName,
+              tip: tip ? tip.textContent : null };
+  el.dispatchEvent(new win.MouseEvent("mousemove", { clientX: x + 300, clientY: y + 300, bubbles: true }));
+  await sleep(120);
+  return r;
+}
+
+try {
+  // 0. Live Overpass downloads ("Load trails in this view") get the same connector rule.
+  //    fixtures/skeggs_overpass.json is the app's query for a small box around Skeggs Point.
+  const { TrailGraph, buildRoute } = await import("../docs/js/trails.js");
+  const og = new TrailGraph();
+  og.loadOverpass(await (await fetch("fixtures/skeggs_overpass.json")).json());
+  out.overpassConnectors = [...og.ways].filter(([, w]) => !w.name).map(([id]) => id).sort();
+  check(String(out.overpassConnectors) === "501899275,618103154", "expected the two trailhead connectors");
+  const fir = og.nearest([37.410112, -122.309013], 5), creek = og.nearest([37.41226, -122.31069], 15);
+  const oseg = og.shortest(fir, creek);
+  out.overpassRoute = oseg && buildRoute(og, [oseg]).legs.map((l) => `${l.name} ${(l.m / MI).toFixed(2)}`);
+  check(oseg && buildRoute(og, [oseg]).length < 0.7 * MI, "Overpass graph: Fir -> creek trail should use the trailhead link");
+
+  // 1. Skeggs Point, then a click on El Corte de Madera Creek Trail just below the trailhead.
+  //    Fir only meets that trail through a short unnamed link at the gate.
+  let tr = await openApp();
+  const { graph, addWaypoint, state, map } = tr;
+  const skeggs = graph.parking.find((p) => p.name === "Skeggs Point Parking");
+  addWaypoint([skeggs.lat, skeggs.lon], { place: skeggs.name, meters: 400 });
+  addWaypoint([37.41226, -122.31069]); // on El Corte de Madera Creek Trail, ~0.4 mi from Skeggs
+  out.skeggsToCreek = { miles: +(state.route.length / MI).toFixed(2), legs: legsOf(tr) };
+  check(state.route.length < 0.6 * MI, "Skeggs -> creek trail should be short (was via Fir > Tafoni, 2 mi)");
+  check(!state.route.legs.some((l) => l.name === "Fir Trail" && l.m > 50), "shouldn't go down Fir Trail");
+
+  // 2. With a route on the map, hovering a trail still highlights it and shows its name.
+  const way = [...graph.ways.values()].find((w) => w.name === "Methuselah Trail");
+  const mid = way.coords[Math.floor(way.coords.length / 2)];
+  await view(map, mid, 16);
+  out.hoverTrail = await hover(tr, mid);
+  check(out.hoverTrail.tip === "Methuselah Trail", "hovering a trail with a route drawn should show its name");
+  const onRoute = state.route.pts[Math.floor(state.route.pts.length * 0.7)];
+  await view(map, onRoute, 17);
+  out.hoverRoute = await hover(tr, onRoute);
+  check(out.hoverRoute.tip === "El Corte de Madera Creek Trail", "hovering the route should name the trail under it");
+
+  // sanity: the test can see the old bug (route canvas swallowing events)
+  map.getPane("route").style.pointerEvents = "";
+  await view(map, mid, 16);
+  out.hoverWithOldBug = await hover(tr, mid);
+  check(out.hoverWithOldBug.tip === null, "sanity check: with the old pane setting, hover should fail");
+  map.getPane("route").style.pointerEvents = "none";
+
+  // 3. The deep south loop share link still restores the same route.
+  tr = await openApp("#n=Deep+south+loop&s=Skeggs+Point+Parking&w=37.41111%2C-122.30671%3B37.40528%2C-122.32114%3B37.40447%2C-122.32291%3B37.40824%2C-122.32712%3B37.40530%2C-122.33253%3B37.39775%2C-122.33385%3B37.39370%2C-122.33010%3B37.38695%2C-122.32788%3B37.38405%2C-122.32443%3B37.38792%2C-122.32064%3B37.39757%2C-122.31025%3B37.40595%2C-122.30459%3B37.41111%2C-122.30671");
+  out.deepLoop = { miles: +(tr.state.route.length / MI).toFixed(2), legs: legsOf(tr) };
+  check(Math.abs(tr.state.route.length / MI - 10.96) < 0.05 && tr.state.route.legs.length === 12, "deep loop changed");
+  out.ok = !out.fail.length;
+} catch (e) {
+  out.error = String(e && e.stack || e);
+}
+document.getElementById("out").textContent = JSON.stringify(out, null, 1);
+</script>

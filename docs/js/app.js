@@ -1,4 +1,4 @@
-import { TrailGraph, buildRoute, pointAt, hav } from "./trails.js";
+import { TrailGraph, buildRoute, pointAt, hav, CONNECTOR_MAX_M } from "./trails.js";
 import { elevations, climb } from "./elevation.js";
 import { stampPdf } from "./geopdf.js";
 
@@ -42,6 +42,10 @@ map.attributionControl.addAttribution('Trails &copy; <a href="https://www.openst
 
 map.createPane("trails").style.zIndex = 410;
 map.createPane("route").style.zIndex = 420;
+// The route is drawn on its own canvas above the trails. A canvas takes every mouse
+// event over the whole map, so let them through to the trails underneath; otherwise
+// trail hover (highlight + name) stops working as soon as a route exists.
+map.getPane("route").style.pointerEvents = "none";
 const trailRenderer = L.canvas({ pane: "trails", tolerance: 7 });
 const routeRenderer = L.canvas({ pane: "route" });
 const trailLayer = L.layerGroup().addTo(map);
@@ -55,7 +59,8 @@ function drawData() {
   for (const [id, w] of graph.ways) {
     if (drawnWays.has(id)) continue;
     drawnWays.add(id);
-    const line = L.polyline(w.coords, { renderer: trailRenderer, color: "#3b2a1a", weight: 2.4, opacity: 0.72 });
+    const line = L.polyline(w.coords, { renderer: trailRenderer, color: "#3b2a1a", weight: 2.4, opacity: 0.72, interactive: !!w.name });
+    if (!w.name) { trailLayer.addLayer(line); continue; } // short unnamed connector between trails
     line.bindTooltip(w.name, { sticky: true, direction: "top", offset: [0, -8], className: "trail-tip" });
     line.on("mouseover", () => line.setStyle({ weight: 5, opacity: 0.95 }));
     line.on("mouseout", () => line.setStyle({ weight: 2.4, opacity: 0.72 }));
@@ -87,7 +92,9 @@ async function loadArea(area) {
 
 async function loadOverpass(bounds) {
   const bb = [bounds.getSouth(), bounds.getWest(), bounds.getNorth(), bounds.getEast()].map((v) => v.toFixed(5)).join(",");
-  const q = `[out:json][timeout:60];(way["highway"~"^(path|track|footway|bridleway|steps|pedestrian|cycleway)$"]["name"](${bb});` +
+  const hw = `["highway"~"^(path|track|footway|bridleway|steps|pedestrian|cycleway)$"]`;
+  const q = `[out:json][timeout:60];(way${hw}["name"](${bb});` +
+    `way${hw}[!"name"](if:length()<=${CONNECTOR_MAX_M})(${bb});` + // candidate connectors
     `way["amenity"="parking"](${bb}););out body geom;`;
   let json = null, why = "";
   for (const url of OVERPASS) {  // main server first, then a mirror

@@ -3,8 +3,10 @@
 
     python3 tools/export_web_data.py OSM.json "El Corte de Madera Creek" docs/data/ecdm.json
 
-Keeps only routable trails (named, not informal, publicly accessible: the same
-rules trailroute.py uses), plus parking lots. Data (c) OpenStreetMap contributors, ODbL.
+Keeps only routable trails (named, not informal, publicly accessible, plus short
+unnamed connectors between them: the same rules trailroute.py uses), and parking
+lots. Connectors are written with an empty name. The download must include unnamed
+ways (trailroute.py's cache does). Data (c) OpenStreetMap contributors, ODbL.
 """
 import json
 import os
@@ -31,13 +33,11 @@ def main():
             parking.append({"name": t.get("name", ""),
                             "lat": round(sum(p["lat"] for p in geom) / len(geom), 6),
                             "lon": round(sum(p["lon"] for p in geom) / len(geom), 6)})
-            continue
-        if not (trailroute.Trails.usable(t) and t.get("name")):
-            continue
-        coords = [[round(p["lat"], 6), round(p["lon"], 6)] for p in geom]
+    for w, name in trailroute.routable_ways(els):
+        coords = [[round(p["lat"], 6), round(p["lon"], 6)] for p in w["geometry"]]
         lats += [c[0] for c in coords]
         lons += [c[1] for c in coords]
-        ways.append({"id": w["id"], "name": t["name"], "n": w["nodes"], "c": coords})
+        ways.append({"id": w["id"], "name": name, "n": w["nodes"], "c": coords})
     named = {p["name"] for p in parking if p["name"]}
     for name, (la, lo) in trailroute.EXTRA_PLACES.items():
         if name not in named:

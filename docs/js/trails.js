@@ -3,11 +3,19 @@
 
 const FOOT = new Set(["path", "track", "footway", "bridleway", "steps", "pedestrian", "cycleway"]);
 const STEP_M = 25; // densify trail geometry to roughly this spacing
+export const CONNECTOR_MAX_M = 150; // unnamed links up to this long can join two named trails
 
-export function usable(t) {
-  return FOOT.has(t.highway) && !!t.name && t.informal !== "yes" &&
+// a foot trail the public may use (named or not)
+function isPublic(t) {
+  return FOOT.has(t.highway) && t.informal !== "yes" &&
     !["no", "private"].includes(t.access) && !["no", "private"].includes(t.foot);
 }
+
+export function usable(t) { return isPublic(t) && !!t.name; }
+
+// "Fir Trail" and "Fir" are the same trail (matches norm() in trailroute.py)
+const norm = (s) => s.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/)
+  .filter((w) => w && !["trail", "tr", "the"].includes(w)).join(" ");
 
 export function hav(a, b) {
   const r = Math.PI / 180;
@@ -95,8 +103,13 @@ export class TrailGraph {
     return added;
   }
 
+  // Named official trails, plus short unnamed connectors whose two ends are on
+  // different named trails. Trailheads are often mapped that way: at Skeggs Point,
+  // Fir Trail reaches Tafoni / El Corte de Madera Creek only through an unnamed bit
+  // of track by the gate. (Same rule as routable_ways() in trailroute.py.)
   loadOverpass(json) {
     let added = 0;
+    const unnamed = [], on = new Map();
     for (const e of json.elements || []) {
       if (e.type !== "way" || !e.geometry) continue;
       const t = e.tags || {};
@@ -105,8 +118,23 @@ export class TrailGraph {
         const g = e.geometry;
         this.addParking(t.name, g.reduce((s, p) => s + p.lat, 0) / g.length,
           g.reduce((s, p) => s + p.lon, 0) / g.length);
-      } else if (usable(t)) {
+      } else if (isPublic(t)) {
+        if (!t.name) { unnamed.push(e); continue; }
         added += this.addWay(e.id, t.name, e.nodes, e.geometry.map((p) => [p.lat, p.lon])) ? 1 : 0;
+        const names = t.name.split(";").map(norm);
+        for (const n of e.nodes) {
+          if (!on.has(n)) on.set(n, new Set());
+          names.forEach((x) => on.get(n).add(x));
+        }
+      }
+    }
+    for (const e of unnamed) {
+      const a = on.get(e.nodes[0]), b = on.get(e.nodes[e.nodes.length - 1]);
+      const g = e.geometry.map((p) => [p.lat, p.lon]);
+      let len = 0;
+      for (let i = 1; i < g.length; i++) len += hav(g[i - 1], g[i]);
+      if (a && b && ![...a].some((x) => b.has(x)) && len <= CONNECTOR_MAX_M) {
+        added += this.addWay(e.id, "", e.nodes, g) ? 1 : 0;
       }
     }
     return added;
@@ -161,8 +189,11 @@ export function buildRoute(graph, segments) {
       if (pts.length) {
         const e = seg.edges[i - 1];
         total += e.d;
-        const name = cur && e.names.includes(cur.name) ? cur.name : e.names[0];
-        if (!cur || cur.name !== name) {
+        // unnamed connector edges (no names) stay in whatever leg they're in
+        const name = !e.names.length ? (cur ? cur.name : null)
+          : cur && e.names.includes(cur.name) ? cur.name : e.names[0];
+        if (cur && cur.name === null && name) cur.name = name; // route began on a connector
+        else if (!cur || cur.name !== name) {
           cur = { name, m: 0, start: total - e.d, junction: pts[pts.length - 1] };
           legs.push(cur);
         }
@@ -183,6 +214,7 @@ export function buildRoute(graph, segments) {
   for (let i = legs.length - 1; i > 0; i--) {
     if (legs[i].name === legs[i - 1].name) { legs[i - 1].m += legs[i].m; legs.splice(i, 1); }
   }
+  for (const leg of legs) leg.name ??= "Connector";
   return { pts, cum, length: total, legs };
 }
 
